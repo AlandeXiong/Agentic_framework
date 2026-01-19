@@ -17,13 +17,17 @@ A model-agnostic, deployment-agnostic, and tool-extensible agentic framework ins
 1. **Agent Base Class**: Defines the core interface and behavior for agents
 2. **Tool Interface**: Abstract interface for all tools
 3. **Runner**: Orchestrates agent execution and coordination
-4. **Message System**: Type-safe message passing between agents
+4. **Workflow System**: Declarative orchestration of tool calls (Flow model)
+5. **MCP Integration**: Adapter layer for MCP Server tools
+6. **Message System**: Type-safe message passing between agents
 
 ### Key Features
 
 - **Model Agnostic**: Works with any LLM provider (OpenAI, Anthropic, local models, etc.)
 - **Deployment Agnostic**: Can run locally, in cloud, or hybrid environments
 - **Tool Extensible**: Easy to create and register new tools
+- **Workflow Support**: First-class support for code-defined workflows
+- **MCP Support**: Call tools exposed by MCP servers as normal tools
 - **Testable**: Modular design enables unit testing of components
 - **Type Safe**: Full type hints for better IDE support and error detection
 
@@ -35,9 +39,10 @@ pip install -e .
 
 ## Quick Start
 
+### 1. Agent Model (LLM decides which tools to call)
+
 ```python
-from agentic import Agent, Tool, Runner, Message, MessageRole
-from agentic.core.model import ModelProvider
+from agentic import Agent, Runner, Message, MessageRole
 from agentic.tools import CalculatorTool
 from agentic.providers.mock import MockModelProvider
 
@@ -55,6 +60,123 @@ agent = Agent(
 # Run the agent
 runner = Runner()
 message = Message(role=MessageRole.USER, content="What is 5 + 3?")
+result = runner.run(agent, message)
+print(result.content)
+```
+
+### 2. Flow Model (explicit workflow of tools)
+
+```python
+from agentic import (
+    WorkflowStep,
+    StepType,
+    Workflow,
+    WorkflowContext,
+    WorkflowRunner,
+)
+from agentic.tools import CalculatorTool
+
+# Define steps
+step_calculate = WorkflowStep(
+    id="calculate_sum",
+    step_type=StepType.TOOL,
+    name="Calculate Sum",
+    tool_name="calculator",
+    tool_params={"operation": "add", "a": 15, "b": 27},
+    output_key="sum_result",
+)
+
+workflow = Workflow(
+    id="sum_workflow",
+    name="Sum Workflow",
+    start_step_id="calculate_sum",
+)
+workflow.add_step(step_calculate)
+
+# Tools registry
+calculator = CalculatorTool()
+tools = {calculator.name: calculator}
+
+ctx = WorkflowContext()
+runner = WorkflowRunner()
+final_ctx = runner.run(workflow, tools=tools, context=ctx)
+print(final_ctx.data["sum_result"])
+```
+
+### 3. MCP-based Tool (MCP Server integration)
+
+```python
+from typing import Dict, Any, Iterable, Optional
+
+from agentic import (
+    Agent,
+    Message,
+    MessageRole,
+    Runner,
+    MCPClient,
+    MCPTool,
+    MCPToolConfig,
+    MCPAuthConfig,
+)
+from agentic.tools import CalculatorTool
+from agentic.providers.mock import MockModelProvider
+
+
+class LocalMCPClient(MCPClient):
+    def __init__(self) -> None:
+        self._handlers: Dict[tuple[str, str], Any] = {}
+
+    def register_handler(self, server_name: str, tool_name: str, handler: Any) -> None:
+        self._handlers[(server_name, tool_name)] = handler
+
+    def call_tool(
+        self,
+        server_name: str,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        auth: Optional[MCPAuthConfig] = None,
+    ) -> Any:
+        handler = self._handlers[(server_name, tool_name)]
+        return handler(arguments)
+
+    def stream_tool(
+        self,
+        server_name: str,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        auth: Optional[MCPAuthConfig] = None,
+    ) -> Iterable[Any]:
+        yield self.call_tool(server_name, tool_name, arguments, auth=auth)
+
+
+# Local calculator implementation
+calculator = CalculatorTool()
+
+client = LocalMCPClient()
+client.register_handler(
+    server_name="local-mcp",
+    tool_name="calculator",
+    handler=lambda args: calculator.execute(**args),
+)
+
+mcp_tool = MCPTool(
+    config=MCPToolConfig(
+        server_name="local-mcp",
+        tool_name="calculator",
+        description="Calculator via MCP",
+        auth=MCPAuthConfig(auth_type="bearer", token="demo-token"),
+    ),
+    client=client,
+)
+
+agent = Agent(
+    name="mcp_agent",
+    model_provider=MockModelProvider(),
+    tools=[mcp_tool],
+)
+
+runner = Runner()
+message = Message(role=MessageRole.USER, content="What is 21 plus 21?")
 result = runner.run(agent, message)
 print(result.content)
 ```
@@ -108,17 +230,19 @@ class MyTool(Tool):
         return result
 ```
 
-### Multi-Agent Coordination
+### Runner and Multi-Agent Coordination
 
-The Runner supports multi-agent workflows:
+The `Runner` orchestrates single-agent and multi-agent execution:
 
 ```python
-# Create multiple agents
-agent1 = Agent(name="agent1", model_provider=provider1, tools=[...])
-agent2 = Agent(name="agent2", model_provider=provider2, tools=[...])
+from agentic import Agent, Runner, Message, MessageRole
 
-# Coordinate them
 runner = Runner()
+
+# Single agent
+response = runner.run(agent, Message(role=MessageRole.USER, content="..."))
+
+# Multi-agent
 messages = runner.run_multi_agent(
     agents=[agent1, agent2],
     initial_message=Message(role=MessageRole.USER, content="..."),
@@ -126,24 +250,66 @@ messages = runner.run_multi_agent(
 )
 ```
 
+### Workflow System
+
+The workflow layer lets you declare tool orchestration as data:
+
+```python
+from agentic import WorkflowStep, StepType, Workflow, WorkflowContext, WorkflowRunner
+
+step = WorkflowStep(
+    id="step1",
+    step_type=StepType.TOOL,
+    name="Do something",
+    tool_name="my_tool",
+    tool_params={"param": "value"},
+    output_key="result1",
+)
+
+workflow = Workflow(
+    id="my_workflow",
+    name="My Workflow",
+    start_step_id="step1",
+)
+workflow.add_step(step)
+
+runner = WorkflowRunner()
+ctx = runner.run(workflow, tools={"my_tool": my_tool}, context=WorkflowContext())
+```
+
+### MCP Integration
+
+The MCP integration lets you treat MCP Server tools as normal tools:
+
+- `MCPClient`: abstract client interface (you implement transport + auth)
+- `MCPAuthConfig`: generic auth configuration (bearer/api_key/custom)
+- `MCPToolConfig`: describes an MCP tool (server, tool name, schema, auth)
+- `MCPTool`: adapts an MCP tool to the `Tool` interface and supports streaming
+
 ## Project Structure
 
 ```
 agentic/
 ├── agentic/
-│   ├── core/          # Core abstractions
-│   │   ├── agent.py   # Agent base class
-│   │   ├── tool.py    # Tool interface
-│   │   ├── runner.py  # Runner orchestrator
-│   │   ├── model.py   # ModelProvider interface
-│   │   └── message.py # Message system
-│   ├── tools/         # Example tool implementations
+│   ├── core/               # Core abstractions
+│   │   ├── agent.py        # Agent base class
+│   │   ├── tool.py         # Tool interface
+│   │   ├── runner.py       # Runner orchestrator
+│   │   ├── model.py        # ModelProvider interface
+│   │   ├── message.py      # Message system
+│   │   ├── workflow_step.py# Workflow step definition
+│   │   ├── workflow.py     # Workflow and context
+│   │   ├── workflow_runner.py # Workflow runner
+│   │   └── mcp.py          # MCP integration (MCPClient, MCPTool, auth)
+│   ├── tools/              # Example tool implementations
 │   │   ├── calculator.py
 │   │   └── weather.py
-│   └── providers/     # Model provider implementations
-│       └── mock.py    # Mock provider for testing
-├── examples/          # Example usage
-│   └── basic_usage.py
+│   └── providers/          # Model provider implementations
+│       └── mock.py         # Mock provider for testing
+├── examples/               # Example usage
+│   ├── basic_usage.py      # Agent model example
+│   ├── workflow_usage.py   # Flow model example
+│   └── mcp_agent_example.py# MCP-based agent example
 └── tests/             # Unit tests (to be added)
 ```
 
