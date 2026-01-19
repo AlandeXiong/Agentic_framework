@@ -46,4 +46,6 @@ htmlcov/
 
 # Logs
 *.log
+.env
 
+/agentic.egg-info/
