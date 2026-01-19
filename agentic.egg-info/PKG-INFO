@@ -1,0 +1,193 @@
+Metadata-Version: 2.4
+Name: agentic
+Version: 0.1.0
+Summary: A model-agnostic, deployment-agnostic agentic framework
+Author-email: Your Name <your.email@example.com>
+License: MIT
+Keywords: ai,agent,llm,agentic
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: pydantic>=2.0.0
+Requires-Dist: typing-extensions>=4.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: mypy>=1.0.0; extra == "dev"
+Requires-Dist: ruff>=0.1.0; extra == "dev"
+
+# Agentic Framework
+
+A model-agnostic, deployment-agnostic, and tool-extensible agentic framework inspired by Google ADK's core design principles.
+
+## Core Design Principles
+
+- **Code-First**: Define agents and tools through code, not configuration
+- **Modular Multi-Agent**: Support multiple agents working together
+- **Tool Decoupling**: Tools are independent, composable modules
+- **Deployment Agnostic**: Works with any model provider and deployment environment
+- **Extensible**: Easy to add new tools and agent capabilities
+
+## Architecture
+
+### Core Components
+
+1. **Agent Base Class**: Defines the core interface and behavior for agents
+2. **Tool Interface**: Abstract interface for all tools
+3. **Runner**: Orchestrates agent execution and coordination
+4. **Message System**: Type-safe message passing between agents
+
+### Key Features
+
+- **Model Agnostic**: Works with any LLM provider (OpenAI, Anthropic, local models, etc.)
+- **Deployment Agnostic**: Can run locally, in cloud, or hybrid environments
+- **Tool Extensible**: Easy to create and register new tools
+- **Testable**: Modular design enables unit testing of components
+- **Type Safe**: Full type hints for better IDE support and error detection
+
+## Installation
+
+```bash
+pip install -e .
+```
+
+## Quick Start
+
+```python
+from agentic import Agent, Tool, Runner, Message, MessageRole
+from agentic.core.model import ModelProvider
+from agentic.tools import CalculatorTool
+from agentic.providers.mock import MockModelProvider
+
+# Create a model provider (or use your own implementation)
+model_provider = MockModelProvider()
+
+# Create an agent with tools
+agent = Agent(
+    name="calculator_agent",
+    model_provider=model_provider,
+    tools=[CalculatorTool()],
+    system_prompt="You are a helpful calculator assistant.",
+)
+
+# Run the agent
+runner = Runner()
+message = Message(role=MessageRole.USER, content="What is 5 + 3?")
+result = runner.run(agent, message)
+print(result.content)
+```
+
+## Architecture Details
+
+### ModelProvider Interface
+
+The `ModelProvider` abstraction allows you to use any LLM:
+
+```python
+from agentic.core.model import ModelProvider
+
+class YourModelProvider(ModelProvider):
+    def generate(self, messages, tools=None, **kwargs):
+        # Your implementation
+        pass
+    
+    def stream(self, messages, tools=None, **kwargs):
+        # Your streaming implementation
+        pass
+```
+
+### Tool Interface
+
+Tools are decoupled, composable modules:
+
+```python
+from agentic import Tool
+
+class MyTool(Tool):
+    @property
+    def name(self) -> str:
+        return "my_tool"
+    
+    @property
+    def description(self) -> str:
+        return "Tool description"
+    
+    def _get_parameters_schema(self):
+        return {
+            "type": "object",
+            "properties": {
+                "param": {"type": "string"}
+            },
+            "required": ["param"]
+        }
+    
+    def execute(self, **kwargs):
+        # Your tool logic
+        return result
+```
+
+### Multi-Agent Coordination
+
+The Runner supports multi-agent workflows:
+
+```python
+# Create multiple agents
+agent1 = Agent(name="agent1", model_provider=provider1, tools=[...])
+agent2 = Agent(name="agent2", model_provider=provider2, tools=[...])
+
+# Coordinate them
+runner = Runner()
+messages = runner.run_multi_agent(
+    agents=[agent1, agent2],
+    initial_message=Message(role=MessageRole.USER, content="..."),
+    routing_strategy=your_routing_function,  # Optional
+)
+```
+
+## Project Structure
+
+```
+agentic/
+├── agentic/
+│   ├── core/          # Core abstractions
+│   │   ├── agent.py   # Agent base class
+│   │   ├── tool.py    # Tool interface
+│   │   ├── runner.py  # Runner orchestrator
+│   │   ├── model.py   # ModelProvider interface
+│   │   └── message.py # Message system
+│   ├── tools/         # Example tool implementations
+│   │   ├── calculator.py
+│   │   └── weather.py
+│   └── providers/     # Model provider implementations
+│       └── mock.py    # Mock provider for testing
+├── examples/          # Example usage
+│   └── basic_usage.py
+└── tests/             # Unit tests (to be added)
+```
+
+## Core Design Philosophy
+
+This framework extracts the core software engineering principles from Google ADK:
+
+1. **Code-First Approach**: Agents and tools are defined through Python classes, not configuration files
+2. **Modular Multi-Agent**: Support for multiple agents working together with clear interfaces
+3. **Tool Decoupling**: Tools are independent, composable modules that can be mixed and matched
+4. **Deployment Agnostic**: No assumptions about deployment environment (local, cloud, hybrid)
+5. **Model Agnostic**: Works with any LLM through the ModelProvider abstraction
+
+Unlike Google ADK, this framework:
+- Removes Google ecosystem dependencies
+- Provides pure abstractions that work with any model provider
+- Focuses on software engineering best practices (modularity, testability, extensibility)
+
+## License
+
+MIT
